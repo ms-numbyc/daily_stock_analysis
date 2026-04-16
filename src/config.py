@@ -48,7 +48,8 @@ class ConfigIssue:
 
 
 _MANAGED_LITELLM_KEY_PROVIDERS = {"gemini", "vertex_ai", "anthropic", "openai", "deepseek"}
-SUPPORTED_LLM_CHANNEL_PROTOCOLS = ("openai", "anthropic", "gemini", "vertex_ai", "deepseek", "ollama")
+SUPPORTED_LLM_CHANNEL_PROTOCOLS = ("openai", "anthropic", "gemini", "vertex_ai", "deepseek", "ollama", "github")
+_GITHUB_MODELS_DEFAULT_BASE_URL = "https://models.inference.ai.azure.com"
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
 AGENT_MAX_STEPS_DEFAULT = 10
 NEWS_STRATEGY_WINDOWS: Dict[str, int] = {
@@ -182,6 +183,9 @@ def canonicalize_llm_channel_protocol(value: Optional[str]) -> str:
         "google": "gemini",
         "vertex": "vertex_ai",
         "vertexai": "vertex_ai",
+        "github_copilot": "github",
+        "copilot": "github",
+        "github_models": "github",
     }
     return aliases.get(candidate, candidate)
 
@@ -252,10 +256,16 @@ def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: O
             "cohere", "huggingface", "bedrock", "sagemaker", "azure",
             "replicate", "together_ai", "palm", "text-completion-openai",
             "command-r", "groq", "cerebras", "fireworks_ai", "friendliai",
+            "github",
         }
         if prefix in known_providers:
+            # GitHub Models uses OpenAI-compatible API; rewrite prefix for LiteLLM
+            if prefix == "github" or canonical_prefix == "github":
+                return f"openai/{remainder}"
             return normalized_model
         if canonical_prefix in known_providers:
+            if canonical_prefix == "github":
+                return f"openai/{remainder}"
             return f"{canonical_prefix}/{remainder}"
         # Not a real provider prefix — add one so LiteLLM routes correctly.
         if resolved_protocol:
@@ -264,6 +274,9 @@ def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: O
 
     if not resolved_protocol:
         return normalized_model
+    # GitHub Models uses OpenAI-compatible API; use openai/ prefix for LiteLLM
+    if resolved_protocol == "github":
+        return f"openai/{normalized_model}"
     return f"{resolved_protocol}/{normalized_model}"
 
 
@@ -1518,6 +1531,9 @@ class Config:
             models_raw = os.getenv(f'LLM_{ch_upper}_MODELS', '')
             raw_models = [m.strip() for m in models_raw.split(',') if m.strip()]
             protocol = resolve_llm_channel_protocol(protocol_raw, base_url=base_url, models=raw_models, channel_name=ch_name)
+            # GitHub Models: auto-set default base URL
+            if protocol == "github" and not base_url:
+                base_url = _GITHUB_MODELS_DEFAULT_BASE_URL
             models = [normalize_llm_channel_model(m, protocol, base_url) for m in raw_models]
 
             # Extra headers (JSON string, optional)
